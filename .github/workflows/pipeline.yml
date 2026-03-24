@@ -29,7 +29,7 @@ jobs:
     - name: Run Pipeline
       env:
         META_ACCESS_TOKEN: ${{ secrets.META_ACCESS_TOKEN }}
-        META_ACCOUNT_ID: ${{ secrets.META_AD_ACCOUNT_ID }}
+        META_AD_ACCOUNT_ID: ${{ secrets.META_AD_ACCOUNT_ID }}
         META_API_VERSION: ${{ secrets.META_API_VERSION }}
         GOOGLE_SPREADSHEET_ID: ${{ secrets.GOOGLE_SPREADSHEET_ID }}
       run: |

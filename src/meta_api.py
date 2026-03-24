@@ -10,9 +10,8 @@ logger = setup_logger("meta_api")
 class MetaAPIClient:
     def __init__(self):
         self.access_token = os.getenv("META_ACCESS_TOKEN")
-        self.app_secret = os.getenv("META_APP_SECRET", "")
-        self.app_id = os.getenv("META_APP_ID", "")
         self.ad_account_id = os.getenv("META_AD_ACCOUNT_ID")
+        self.api_version = os.getenv("META_API_VERSION", "v17.0") # Use fallback if not provided
         
         if not self.access_token or not self.ad_account_id:
             raise ValueError("META_ACCESS_TOKEN and META_AD_ACCOUNT_ID must be set.")
@@ -20,7 +19,7 @@ class MetaAPIClient:
         if not self.ad_account_id.startswith("act_"):
             self.ad_account_id = f"act_{self.ad_account_id}"
             
-        FacebookAdsApi.init(self.app_id, self.app_secret, self.access_token)
+        FacebookAdsApi.init(access_token=self.access_token, api_version=self.api_version)
         self.account = AdAccount(self.ad_account_id)
 
     def extract_action_value(self, actions_list, action_type, default=0.0):

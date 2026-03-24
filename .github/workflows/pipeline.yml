@@ -2,13 +2,13 @@ name: Hourly Meta Ads Pipeline
 
 on:
   schedule:
-    - cron: '0 * * * *' # Runs at the top of every hour
-  workflow_dispatch: # Allows manual trigger from GitHub UI
+    - cron: '0 * * * *'
+  workflow_dispatch:
 
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
-    
+
     steps:
     - name: Checkout Repository
       uses: actions/checkout@v3
@@ -23,12 +23,14 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
 
+    - name: Create Google creds file
+      run: echo '${{ secrets.GOOGLE_CREDENTIALS_JSON }}' > creds.json
+
     - name: Run Pipeline
       env:
         META_ACCESS_TOKEN: ${{ secrets.META_ACCESS_TOKEN }}
-        META_AD_ACCOUNT_ID: ${{ secrets.META_AD_ACCOUNT_ID }}
+        META_ACCOUNT_ID: ${{ secrets.META_AD_ACCOUNT_ID }}
         META_API_VERSION: ${{ secrets.META_API_VERSION }}
-        GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
         GOOGLE_SPREADSHEET_ID: ${{ secrets.GOOGLE_SPREADSHEET_ID }}
       run: |
         python -m src.main

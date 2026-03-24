@@ -5,6 +5,14 @@ from src.utils import setup_logger, retry
 
 logger = setup_logger("sheets_api")
 
+def get_column_letter(n):
+    """Converts a 1-based column index to an Excel-style letter (A, B, ..., Z, AA, AB...)."""
+    string = ""
+    while n > 0:
+        n, remainder = divmod(n - 1, 26)
+        string = chr(65 + remainder) + string
+    return string
+
 class GoogleSheetsClient:
     def __init__(self, spreadsheet_id=None, sheet_name="Daily Insights", test_mode=False):
         self.credentials_file = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "creds.json")
@@ -36,8 +44,9 @@ class GoogleSheetsClient:
         Used primarily for clean test runs.
         """
         logger.info(f"Clearing all rows from sheet: {self.sheet_name}")
-        # Clear everything from row 2 onwards
-        self.sheet.batch_clear(["A2:R1000"]) 
+        # Clear everything from row 2 onwards, using a large enough range
+        last_col = get_column_letter(self.sheet.col_count)
+        self.sheet.batch_clear([f"A2:{last_col}1000"]) 
 
     def _authenticate(self):
         # 1. Try String Mode (most robust for GitHub Actions)
@@ -71,19 +80,27 @@ class GoogleSheetsClient:
             "link_clicks", "web_page_views", "click_to_view_ratio", "cpt", "revenue", "roas", "atc",
             "impressions", "data_hour", "pipeline_run_time", "freshness_lag_hours"
         ]
+        num_cols_required = len(expected_headers)
         
         try:
             worksheet = spreadsheet.worksheet(self.sheet_name)
-            # CHECK HEADERS SYNC
+            
+            # 1. ENSURE COLUMN COUNT
+            if worksheet.col_count < num_cols_required:
+                logger.info(f"Expanding columns from {worksheet.col_count} to {num_cols_required}")
+                worksheet.add_cols(num_cols_required - worksheet.col_count)
+                
+            # 2. CHECK HEADERS SYNC
             existing_headers = worksheet.row_values(1)
             if existing_headers != expected_headers:
-                logger.info("Schema mismatch detected! Updating headers...")
-                # Note: This is an aggressive sync for the refinement phase
-                # We overwrite the first row. 
-                worksheet.update('A1', [expected_headers])
+                logger.info("Schema mismatch detected! Syncing headers...")
+                # Update entire row 1 to match expected schema exactly
+                header_range = f"A1:{get_column_letter(num_cols_required)}1"
+                worksheet.update(header_range, [expected_headers])
+                
         except gspread.exceptions.WorksheetNotFound:
             logger.info(f"Worksheet '{self.sheet_name}' not found. Creating it...")
-            worksheet = spreadsheet.add_worksheet(title=self.sheet_name, rows="1000", cols="20")
+            worksheet = spreadsheet.add_worksheet(title=self.sheet_name, rows="1000", cols=str(num_cols_required))
             worksheet.append_row(expected_headers)
         return worksheet
 
@@ -129,19 +146,27 @@ class GoogleSheetsClient:
         else:
             existing_map = self.get_existing_keys_with_index()
         
+        # 1. ENFORCE SAFETY CHECK (Pre-expansion)
+        if data_list:
+            num_cols = len(data_list[0])
+            if num_cols > self.sheet.col_count:
+                logger.info(f"Expanding sheet columns: {self.sheet.col_count} -> {num_cols}")
+                self.sheet.add_cols(num_cols - self.sheet.col_count)
+
         rows_to_insert = []
         updates = []
         
-        # Determine column letters for range updates, schema is 16 columns (A -> P)
         for row in data_list:
             # key is (Name, Date) -> row[0], row[1]
             key = f"{row[0]}_{row[1]}"
             
             if key in existing_map:
                 row_idx = existing_map[key]
-                # Schema is now 18 columns (A -> R)
+                num_cols = len(row)
+                end_col = get_column_letter(num_cols)
+                
                 updates.append({
-                    'range': f'A{row_idx}:R{row_idx}', 
+                    'range': f'A{row_idx}:{end_col}{row_idx}', 
                     'values': [row]
                 })
             else:

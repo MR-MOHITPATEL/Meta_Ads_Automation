@@ -40,13 +40,27 @@ class GoogleSheetsClient:
         self.sheet.batch_clear(["A2:Q1000"]) 
 
     def _authenticate(self):
+        # 1. Try String Mode (most robust for GitHub Actions)
+        creds_json = os.getenv("GOOGLE_CREDENTIALS_JSON")
+        if creds_json:
+            try:
+                import json
+                creds_dict = json.loads(creds_json)
+                credentials = Credentials.from_service_account_info(creds_dict, scopes=self.scopes)
+                logger.info("Authenticated using GOOGLE_CREDENTIALS_JSON environment variable.")
+                return gspread.authorize(credentials)
+            except Exception as e:
+                logger.warning(f"Failed to authenticate using JSON string: {e}")
+
+        # 2. Try File Mode (Standard fallback)
         if not os.path.exists(self.credentials_file):
             raise FileNotFoundError(
                 f"Google credentials missing! Expected file at: '{self.credentials_file}'. "
-                "Ensure GOOGLE_APPLICATION_CREDENTIALS is set or creds.json exists locally."
+                "Ensure GOOGLE_CREDENTIALS_JSON or GOOGLE_APPLICATION_CREDENTIALS is set."
             )
             
         credentials = Credentials.from_service_account_file(self.credentials_file, scopes=self.scopes)
+        logger.info(f"Authenticated using credentials file: {self.credentials_file}")
         return gspread.authorize(credentials)
 
     @retry(Exception, tries=4, delay=5, backoff=2, logger=logger)

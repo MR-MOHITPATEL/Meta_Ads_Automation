@@ -57,13 +57,13 @@ def transform_data(raw_data):
         # Internal aggregation still uses campaign_id for robustness if available
         # But we key by (Name, Date) if we want to match the display-only logic perfectly later
         # Actually, let's stick to campaign_id for internal aggregation to be safe.
-        id_key = f"{row['campaign_id']}_{row['date_start']}"
+        id_key = f"{row['campaign_id']}_{row['date_stop']}"
         
         if id_key not in aggregated:
             aggregated[id_key] = {
                 'campaign_id': row['campaign_id'],
                 'campaign_name': row['campaign_name'],
-                'date_start': row['date_start'],
+                'date_stop': row['date_stop'],
                 'total_spend': 0.0,
                 'total_impressions': 0.0,
                 'total_clicks': 0.0,
@@ -71,7 +71,8 @@ def transform_data(raw_data):
                 'total_landing_page_views': 0.0,
                 'total_revenue': 0.0,
                 'total_purchases': 0.0,
-                'total_atc': 0.0
+                'total_atc': 0.0,
+                'latest_hour': '00:00:00'
             }
             
         agg = aggregated[id_key]
@@ -83,58 +84,81 @@ def transform_data(raw_data):
         agg['total_revenue'] += row['revenue']
         agg['total_purchases'] += row['purchases']
         agg['total_atc'] += row['atc']
+        # Keep the most recent hour for freshness reporting
+        if row['hour'] > agg['latest_hour']:
+            agg['latest_hour'] = row['hour']
 
     # Final result list
-    formatted_data = []
+    transformed = []
     
     # OUTPUT SCHEMA (Display Only)
     schemas = [
         "campaign_name", "date", "week_of_month", "spend", "cpm", "cpc", "ctr", 
         "link_clicks", "web_page_views", "click_to_view_ratio", "cpt", "revenue", "roas", "atc",
-        "impressions", "extraction_hour"
+        "impressions", "data_hour", "pipeline_run_time", "freshness_lag_hours"
     ]
     
-    # Sort by date ascending (date_start)
-    sorted_items = sorted(aggregated.items(), key=lambda x: x[1]['date_start'])
+    # Sort by date ascending (date_stop)
+    sorted_items = sorted(aggregated.items(), key=lambda x: x[1]['date_stop'])
     
+    run_time = datetime.now()
+    current_hour = run_time.hour
+
     for id_key, agg in sorted_items:
-        dt = datetime.strptime(agg['date_start'], '%Y-%m-%d')
+        dt = datetime.strptime(agg['date_stop'], '%Y-%m-%d')
         formatted_date = dt.strftime('%d-%B-%Y')
         week_str = get_week_of_month(dt)
         
-        # Recalculate percentages/rates from totals
-        ctr = safe_divide(agg['total_clicks'], agg['total_impressions']) * 100.0
-        cpc = safe_divide(agg['total_spend'], agg['total_clicks'])
-        cpm = safe_divide(agg['total_spend'], agg['total_impressions']) * 1000.0
-        roas = safe_divide(agg['total_revenue'], agg['total_spend'])
-        click_to_view_ratio = safe_divide(agg['total_landing_page_views'], agg['total_link_clicks'])
-        cpt = safe_divide(agg['total_spend'], agg['total_purchases'])
-        
+        # Calculate Freshness Metrics
+        try:
+            # hour is "14:00:00" -> 14
+            latest_h = str(agg.get('latest_hour', '00:00:00'))
+            data_hour_int = int(latest_h.split(':')[0]) if ':' in latest_h else 0
+            lag = (current_hour - data_hour_int) % 24
+        except (ValueError, AttributeError, IndexError):
+            data_hour_int = 0
+            lag = 0
+
+        # Local variables with explicit types for calculations
+        spend = float(agg['total_spend'])
+        impressions = int(agg['total_impressions'])
+        clicks = float(agg['total_clicks'])
+        link_clicks = int(agg['total_link_clicks'])
+        lpage_views = int(agg['total_landing_page_views'])
+        revenue = float(agg['total_revenue'])
+        purchases = float(agg['total_purchases'])
+        atc = int(agg['total_atc'])
+
         row_dict = {
-            'campaign_name': agg['campaign_name'],
-            'date': formatted_date,
-            'week_of_month': week_str,
-            'spend': round(agg['total_spend'], 2),
-            'cpm': round(cpm, 2),
-            'cpc': round(cpc, 2),
-            'ctr': f"{round(ctr, 2)}%",
-            'link_clicks': int(agg['total_link_clicks']),
-            'web_page_views': int(agg['total_landing_page_views']),
-            'click_to_view_ratio': f"{round(click_to_view_ratio * 100.0, 2)}%",
-            'cpt': round(cpt, 2),
-            'revenue': round(agg['total_revenue'], 2),
-            'roas': round(roas, 2),
-            'atc': int(agg['total_atc']),
-            'impressions': int(agg['total_impressions']),
-            'extraction_hour': extraction_hour
+            "campaign_name": str(agg['campaign_name']),
+            "date": formatted_date,
+            "week_of_month": week_str,
+            "spend": round(spend, 2),
+            "impressions": impressions,
+            "link_clicks": link_clicks,
+            "web_page_views": lpage_views,
+            "revenue": round(revenue, 2),
+            "atc": atc,
+            "data_hour": data_hour_int,
+            "pipeline_run_time": run_time.strftime('%d-%m-%Y %H:%M'),
+            "freshness_lag_hours": lag
         }
         
-        ordered_row = [row_dict.get(col, "") for col in schemas]
-        formatted_data.append(ordered_row)
+        # Extended calculations
+        row_dict["cpm"] = round((spend / impressions * 1000), 2) if impressions > 0 else 0.0
+        row_dict["cpc"] = round((spend / clicks), 2) if clicks > 0 else 0.0
+        row_dict["ctr"] = f"{round((clicks / impressions * 100), 2)}%" if impressions > 0 else "0.00%"
+        row_dict["click_to_view_ratio"] = f"{round((float(lpage_views) / float(link_clicks) * 100), 2)}%" if link_clicks > 0 else "0.00%"
+        row_dict["cpt"] = round((spend / purchases), 2) if purchases > 0 else 0.0
+        row_dict["roas"] = round((revenue / spend), 2) if spend > 0 else 0.0
+        
+        # Create ordered row based on schemas
+        ordered_row = [row_dict.get(col, 0) for col in schemas]
+        transformed.append(ordered_row)
 
-    validate_data(formatted_data)
-    logger.info(f"Aggregated records into {len(formatted_data)} daily display rows.")
-    return formatted_data
+    validate_data(transformed)
+    logger.info(f"Aggregated records into {len(transformed)} daily display rows.")
+    return transformed
 
 def run_hourly_pipeline(test_mode=False, start_date=None, end_date=None, hours=3):
     from src.meta_api import MetaAPIClient

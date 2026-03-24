@@ -50,7 +50,7 @@ class MetaAPIClient:
             'fields': [
                 'campaign_id',
                 'campaign_name',
-                'date_start',
+                'date_stop',
                 'spend',
                 'impressions',
                 'clicks',
@@ -80,9 +80,9 @@ class MetaAPIClient:
         
         for item in insights_list:
             raw_hour_str = item.get('hourly_stats_aggregated_by_advertiser_time_zone')
-            date_start_str = item.get('date_start')
+            date_stop_str = item.get('date_stop') # Switch to date_stop for reporting
             
-            if not date_start_str:
+            if not date_stop_str:
                 dropped_missing_date += 1
                 continue
                 
@@ -106,7 +106,7 @@ class MetaAPIClient:
             row_record = {
                 'campaign_id': item.get('campaign_id', 'Unknown'),
                 'campaign_name': item.get('campaign_name', 'Unknown'),
-                'date_start': date_start_str,
+                'date_stop': date_stop_str,
                 'hour': start_hour_str,
                 'spend': spend_val,
                 'impressions': impressions_val,
@@ -169,7 +169,7 @@ class MetaAPIClient:
             'fields': [
                 'campaign_id',
                 'campaign_name',
-                'date_start',
+                'date_stop',
                 'spend',
                 'impressions',
                 'clicks',
@@ -196,11 +196,11 @@ class MetaAPIClient:
         dropped_missing_date = 0
         
         for item in insights_list:
-            date_start_str = item.get('date_start')
+            date_stop_str = item.get('date_stop') # Switch to date_stop
             campaign_name = item.get('campaign_name', 'Unknown')
             campaign_id = item.get('campaign_id', 'Unknown')
             
-            if not date_start_str:
+            if not date_stop_str:
                 dropped_missing_date += 1
                 if not debug_mode: continue
                 
@@ -230,7 +230,7 @@ class MetaAPIClient:
             processed_data.append({
                 'campaign_id': campaign_id,
                 'campaign_name': campaign_name,
-                'date_start': date_start_str,
+                'date_stop': date_stop_str, # Changed from date_start to date_stop
                 'hour': 'SYNC',
                 'spend': spend_val,
                 'impressions': impressions_val,
@@ -264,7 +264,7 @@ class MetaAPIClient:
             'fields': [
                 'campaign_id',
                 'campaign_name',
-                'date_start',
+                'date_stop',
                 'spend',
                 'impressions',
                 'clicks',

@@ -37,7 +37,7 @@ class GoogleSheetsClient:
         """
         logger.info(f"Clearing all rows from sheet: {self.sheet_name}")
         # Clear everything from row 2 onwards
-        self.sheet.batch_clear(["A2:Q1000"]) 
+        self.sheet.batch_clear(["A2:R1000"]) 
 
     def _authenticate(self):
         # 1. Try String Mode (most robust for GitHub Actions)
@@ -69,7 +69,7 @@ class GoogleSheetsClient:
         expected_headers = [
             "campaign_name", "date", "week_of_month", "spend", "cpm", "cpc", "ctr", 
             "link_clicks", "web_page_views", "click_to_view_ratio", "cpt", "revenue", "roas", "atc",
-            "impressions", "extraction_hour"
+            "impressions", "data_hour", "pipeline_run_time", "freshness_lag_hours"
         ]
         
         try:
@@ -139,8 +139,9 @@ class GoogleSheetsClient:
             
             if key in existing_map:
                 row_idx = existing_map[key]
+                # Schema is now 18 columns (A -> R)
                 updates.append({
-                    'range': f'A{row_idx}:P{row_idx}', 
+                    'range': f'A{row_idx}:R{row_idx}', 
                     'values': [row]
                 })
             else:

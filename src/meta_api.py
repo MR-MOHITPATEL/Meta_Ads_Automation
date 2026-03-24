@@ -36,12 +36,16 @@ class MetaAPIClient:
         now = datetime.now()
         yesterday = now - timedelta(days=1)
         
+        # Ensure dates are always dynamic (Yesterday to Today)
+        since_date = yesterday.strftime('%Y-%m-%d')
+        until_date = now.strftime('%Y-%m-%d')
+        
         params = {
             'level': 'campaign',
             'breakdowns': ['hourly_stats_aggregated_by_advertiser_time_zone'],
             'time_range': {
-                'since': yesterday.strftime('%Y-%m-%d'),
-                'until': now.strftime('%Y-%m-%d')
+                'since': since_date,
+                'until': until_date
             },
             'fields': [
                 'campaign_id',
@@ -56,58 +60,38 @@ class MetaAPIClient:
             'limit': 2000
         }
         
-        logger.info(f"Fetching Meta insights from {params['time_range']['since']} to {params['time_range']['until']}")
+        logger.info(f"System Time: {now.strftime('%Y-%m-%d %H:%M:%S')} | Fetching: {since_date} to {until_date}")
         insights = self.account.get_insights(params=params)
         insights_list = list(insights) if insights else []
         fetched_count = len(insights_list)
         logger.info(f"RAW DATA: Total records fetched from Meta API: {fetched_count}")
         
         if fetched_count > 0:
-            sample_size = min(3, fetched_count)
-            logger.info(f"RAW SAMPLE (first {sample_size} records):")
-            for i in range(sample_size):
-                logger.info(f"Record {i+1}: {insights_list[i]}")
+            sample_size = min(2, fetched_count)
+            logger.info(f"RAW SAMPLE (first {sample_size}): {insights_list[:sample_size]}")
 
-        cutoff_time = now - timedelta(hours=hours)
+        current_hour = now.hour
         processed_data = []
+        all_parsed_records = [] # For fallback
         
-        # Tracking for validation logs
         dropped_zero_reach = 0
         dropped_missing_date = 0
         dropped_time_window = 0
         
         for item in insights_list:
-            raw_hour = item.get('hourly_stats_aggregated_by_advertiser_time_zone')
+            raw_hour_str = item.get('hourly_stats_aggregated_by_advertiser_time_zone')
             date_start_str = item.get('date_start')
-            campaign_name = item.get('campaign_name', 'Unknown')
-            campaign_id = item.get('campaign_id', 'Unknown')
             
             if not date_start_str:
                 dropped_missing_date += 1
-                if not debug_mode: continue
+                continue
                 
             spend_val = parse_float(item.get('spend', 0))
             impressions_val = parse_float(item.get('impressions', 0))
             clicks_val = parse_float(item.get('clicks', 0))
             
-            # Relaxed Filtering: Keep if impressions > 0 OR spend > 0
-            if not debug_mode and (spend_val == 0.0 and impressions_val == 0.0):
-                dropped_zero_reach += 1
-                continue
-                
-            if not debug_mode:
-                try:
-                    start_hour_str = raw_hour.split(' - ')[0] if raw_hour else "00:00:00"
-                    dt_str = f"{date_start_str} {start_hour_str}"
-                    insight_dt = datetime.strptime(dt_str, '%Y-%m-%d %H:%M:%S')
-                    
-                    if insight_dt < cutoff_time:
-                        dropped_time_window += 1
-                        continue
-                except (ValueError, AttributeError):
-                    pass # Keep if we can't parse time but have reach
-            
-            start_hour_str = raw_hour.split(' - ')[0] if raw_hour else "00:00:00"
+            # 1. Parse row data for potential use
+            start_hour_str = raw_hour_str.split(' - ')[0] if raw_hour_str else "00:00:00"
             actions = item.get('actions', [])
             action_values = item.get('action_values', [])
             
@@ -115,16 +99,13 @@ class MetaAPIClient:
             landing_page_views = self.extract_action_value(actions, 'landing_page_view')
             atc = self.extract_action_value(actions, 'add_to_cart')
             purchases = self.extract_action_value(actions, 'purchase')
-            
             revenue = self.extract_action_value(action_values, 'purchase_conversion_value')
             if revenue == 0.0:
                 revenue = self.extract_action_value(action_values, 'offsite_conversion.fb_pixel_purchase')
-            if revenue == 0.0:
-                revenue = self.extract_action_value(action_values, 'purchase')
 
-            processed_data.append({
-                'campaign_id': campaign_id,
-                'campaign_name': campaign_name,
+            row_record = {
+                'campaign_id': item.get('campaign_id', 'Unknown'),
+                'campaign_name': item.get('campaign_name', 'Unknown'),
                 'date_start': date_start_str,
                 'hour': start_hour_str,
                 'spend': spend_val,
@@ -135,13 +116,41 @@ class MetaAPIClient:
                 'revenue': revenue,
                 'atc': atc,
                 'purchases': purchases,
-            })
+            }
+            all_parsed_records.append(row_record)
+
+            # 2. Relaxed Filtering: Keep if impressions > 0 OR spend > 0
+            if not debug_mode and (spend_val == 0.0 and impressions_val == 0.0):
+                dropped_zero_reach += 1
+                continue
+                
+            # 3. Hourly Window Logic
+            try:
+                row_hour = int(start_hour_str.split(':')[0])
+                # Calculate diff handling wrap-around (e.g., 23 -> 01)
+                diff = (current_hour - row_hour) % 24
+                
+                decision = "KEPT"
+                if not debug_mode and diff > hours:
+                    decision = "DROPPED (Time Window)"
+                    dropped_time_window += 1
+                    logger.info(f"Row Hour: {row_hour:02d} | System Hour: {current_hour:02d} | DIFF: {diff}h | {decision}")
+                    continue
+                
+                logger.info(f"Row Hour: {row_hour:02d} | System Hour: {current_hour:02d} | DIFF: {diff}h | {decision}")
+                processed_data.append(row_record)
+
+            except (ValueError, IndexError):
+                logger.warning(f"Could not parse hour from '{start_hour_str}'. Keeping row as safety fallback.")
+                processed_data.append(row_record)
             
-        if dropped_zero_reach > 0: logger.info(f"Rows dropped due to zero reach (spend & impressions): {dropped_zero_reach}")
-        if dropped_missing_date > 0: logger.info(f"Rows dropped due to missing date: {dropped_missing_date}")
-        if dropped_time_window > 0: logger.info(f"Rows dropped due to being outside {hours}h window: {dropped_time_window}")
-        
-        logger.info(f"Retrieved and filtered {len(processed_data)} valid records {'(DEBUG MODE ON)' if debug_mode else ''}.")
+        # SAFE FALLBACK: If filtering result in 0 records but we have raw data, use all parsed records
+        if len(processed_data) == 0 and len(all_parsed_records) > 0:
+            logger.warning("FILTERING FALLBACK: 0 records remained after filtering. Using all available raw records as safety.")
+            processed_data = all_parsed_records
+
+        logger.info(f"Summary: Dropped {dropped_zero_reach} zero-reach, {dropped_time_window} outside window.")
+        logger.info(f"Final Count: {len(processed_data)} records {'(DEBUG MODE ON)' if debug_mode else ''}.")
         return processed_data
 
     @retry(Exception, tries=5, delay=5, backoff=2, logger=logger)

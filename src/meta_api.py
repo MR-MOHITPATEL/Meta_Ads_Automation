@@ -32,6 +32,7 @@ class MetaAPIClient:
 
     @retry(Exception, tries=5, delay=5, backoff=2, logger=logger)
     def fetch_insights_last_n_hours(self, hours=3):
+        debug_mode = os.getenv("DEBUG_MODE", "False").lower() == "true"
         now = datetime.now()
         yesterday = now - timedelta(days=1)
         
@@ -59,10 +60,21 @@ class MetaAPIClient:
         insights = self.account.get_insights(params=params)
         insights_list = list(insights) if insights else []
         fetched_count = len(insights_list)
-        logger.info(f"DEBUG VALIDATION: Total hours fetched from Meta API: {fetched_count}")
+        logger.info(f"RAW DATA: Total records fetched from Meta API: {fetched_count}")
         
+        if fetched_count > 0:
+            sample_size = min(3, fetched_count)
+            logger.info(f"RAW SAMPLE (first {sample_size} records):")
+            for i in range(sample_size):
+                logger.info(f"Record {i+1}: {insights_list[i]}")
+
         cutoff_time = now - timedelta(hours=hours)
         processed_data = []
+        
+        # Tracking for validation logs
+        dropped_zero_reach = 0
+        dropped_missing_date = 0
+        dropped_time_window = 0
         
         for item in insights_list:
             raw_hour = item.get('hourly_stats_aggregated_by_advertiser_time_zone')
@@ -71,28 +83,31 @@ class MetaAPIClient:
             campaign_id = item.get('campaign_id', 'Unknown')
             
             if not date_start_str:
-                continue
+                dropped_missing_date += 1
+                if not debug_mode: continue
                 
-            start_hour_str = raw_hour.split(' - ')[0]
+            spend_val = parse_float(item.get('spend', 0))
+            impressions_val = parse_float(item.get('impressions', 0))
+            clicks_val = parse_float(item.get('clicks', 0))
             
-            spend_val = parse_float(item.get('spend'))
-            impressions_val = parse_float(item.get('impressions'))
+            # Relaxed Filtering: Keep if impressions > 0 OR spend > 0
+            if not debug_mode and (spend_val == 0.0 and impressions_val == 0.0):
+                dropped_zero_reach += 1
+                continue
+                
+            if not debug_mode:
+                try:
+                    start_hour_str = raw_hour.split(' - ')[0] if raw_hour else "00:00:00"
+                    dt_str = f"{date_start_str} {start_hour_str}"
+                    insight_dt = datetime.strptime(dt_str, '%Y-%m-%d %H:%M:%S')
+                    
+                    if insight_dt < cutoff_time:
+                        dropped_time_window += 1
+                        continue
+                except (ValueError, AttributeError):
+                    pass # Keep if we can't parse time but have reach
             
-            # ISSUE 2 & 3: Drop ONLY if spend and impressions are both zero.
-            if spend_val == 0.0 and impressions_val == 0.0:
-                continue
-                
-            try:
-                dt_str = f"{date_start_str} {start_hour_str}"
-                insight_dt = datetime.strptime(dt_str, '%Y-%m-%d %H:%M:%S')
-                
-                # Filter for the last `hours` window
-                if insight_dt < cutoff_time:
-                    continue
-                        
-            except ValueError:
-                continue
-                
+            start_hour_str = raw_hour.split(' - ')[0] if raw_hour else "00:00:00"
             actions = item.get('actions', [])
             action_values = item.get('action_values', [])
             
@@ -112,9 +127,9 @@ class MetaAPIClient:
                 'campaign_name': campaign_name,
                 'date_start': date_start_str,
                 'hour': start_hour_str,
-                'spend': parse_float(item.get('spend')),
-                'impressions': parse_float(item.get('impressions')),
-                'clicks': parse_float(item.get('clicks')),
+                'spend': spend_val,
+                'impressions': impressions_val,
+                'clicks': clicks_val,
                 'link_clicks': link_clicks,
                 'landing_page_views': landing_page_views,
                 'revenue': revenue,
@@ -122,11 +137,16 @@ class MetaAPIClient:
                 'purchases': purchases,
             })
             
-        logger.info(f"Retrieved and filtered {len(processed_data)} valid records.")
+        if dropped_zero_reach > 0: logger.info(f"Rows dropped due to zero reach (spend & impressions): {dropped_zero_reach}")
+        if dropped_missing_date > 0: logger.info(f"Rows dropped due to missing date: {dropped_missing_date}")
+        if dropped_time_window > 0: logger.info(f"Rows dropped due to being outside {hours}h window: {dropped_time_window}")
+        
+        logger.info(f"Retrieved and filtered {len(processed_data)} valid records {'(DEBUG MODE ON)' if debug_mode else ''}.")
         return processed_data
 
     @retry(Exception, tries=5, delay=5, backoff=2, logger=logger)
     def fetch_insights_daily_sync(self, days=2):
+        debug_mode = os.getenv("DEBUG_MODE", "False").lower() == "true"
         now = datetime.now()
         start_date = now - timedelta(days=days)
         
@@ -138,6 +158,7 @@ class MetaAPIClient:
                 'until': now.strftime('%Y-%m-%d')
             },
             'fields': [
+                'campaign_id',
                 'campaign_name',
                 'date_start',
                 'spend',
@@ -153,9 +174,17 @@ class MetaAPIClient:
         insights = self.account.get_insights(params=params)
         insights_list = list(insights) if insights else []
         fetched_count = len(insights_list)
-        logger.info(f"DEBUG VALIDATION: Total daily synced rows fetched from Meta API: {fetched_count}")
+        logger.info(f"RAW DATA: Total daily records fetched from Meta API: {fetched_count}")
         
+        if fetched_count > 0:
+            sample_size = min(3, fetched_count)
+            logger.info(f"RAW DAILY SAMPLE (first {sample_size} records):")
+            for i in range(sample_size):
+                logger.info(f"Record {i+1}: {insights_list[i]}")
+
         processed_data = []
+        dropped_zero_reach = 0
+        dropped_missing_date = 0
         
         for item in insights_list:
             date_start_str = item.get('date_start')
@@ -163,13 +192,16 @@ class MetaAPIClient:
             campaign_id = item.get('campaign_id', 'Unknown')
             
             if not date_start_str:
-                continue
+                dropped_missing_date += 1
+                if not debug_mode: continue
                 
-            spend_val = parse_float(item.get('spend'))
-            impressions_val = parse_float(item.get('impressions'))
+            spend_val = parse_float(item.get('spend', 0))
+            impressions_val = parse_float(item.get('impressions', 0))
+            clicks_val = parse_float(item.get('clicks', 0))
             
-            # ISSUE 2 & 3: Drop ONLY if spend and impressions are both zero.
-            if spend_val == 0.0 and impressions_val == 0.0:
+            # Relaxed Filtering: Keep if impressions > 0 OR spend > 0
+            if not debug_mode and (spend_val == 0.0 and impressions_val == 0.0):
+                dropped_zero_reach += 1
                 continue
                 
             actions = item.get('actions', [])
@@ -190,10 +222,10 @@ class MetaAPIClient:
                 'campaign_id': campaign_id,
                 'campaign_name': campaign_name,
                 'date_start': date_start_str,
-                'hour': 'SYNC', # Placeholder hour, pipeline aggregator drops hour regardless
+                'hour': 'SYNC',
                 'spend': spend_val,
                 'impressions': impressions_val,
-                'clicks': parse_float(item.get('clicks')),
+                'clicks': clicks_val,
                 'link_clicks': link_clicks,
                 'landing_page_views': landing_page_views,
                 'revenue': revenue,
@@ -201,7 +233,10 @@ class MetaAPIClient:
                 'purchases': purchases,
             })
             
-        logger.info(f"Retrieved and filtered {len(processed_data)} valid daily finalized records.")
+        if dropped_zero_reach > 0: logger.info(f"Rows dropped due to zero reach: {dropped_zero_reach}")
+        if dropped_missing_date > 0: logger.info(f"Rows dropped due to missing date: {dropped_missing_date}")
+        
+        logger.info(f"Retrieved and filtered {len(processed_data)} valid daily records {'(DEBUG MODE ON)' if debug_mode else ''}.")
         return processed_data
 
     @retry(Exception, tries=5, delay=5, backoff=2, logger=logger)

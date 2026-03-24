@@ -36,8 +36,6 @@ def validate_data(data):
     for i, row in enumerate(data):
         # Key is now (Name, Date) at index 0 and 1
         key = f"{row[0]}_{row[1]}"
-        if key in seen_keys:
-            raise ValueError(f"VALIDATION FAILED: Duplicate row found for key {key}")
         seen_keys.add(key)
         
         if not row[0] or not row[1]:

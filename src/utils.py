@@ -1,6 +1,11 @@
 import logging
 import time
+from datetime import datetime, timedelta
 from functools import wraps
+
+def get_current_ist_time():
+    """Returns current time in IST (UTC+5:30)"""
+    return datetime.utcnow() + timedelta(hours=5, minutes=30)
 
 def setup_logger(name="meta_pipeline"):
     logger = logging.getLogger(name)

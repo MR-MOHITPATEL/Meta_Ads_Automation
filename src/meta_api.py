@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from facebook_business.api import FacebookAdsApi
 from facebook_business.adobjects.adaccount import AdAccount
 
-from src.utils import setup_logger, retry, parse_float
+from src.utils import setup_logger, retry, parse_float, get_current_ist_time
 
 logger = setup_logger("meta_api")
 
@@ -33,12 +33,15 @@ class MetaAPIClient:
     @retry(Exception, tries=5, delay=5, backoff=2, logger=logger)
     def fetch_insights_last_n_hours(self, hours=3):
         debug_mode = os.getenv("DEBUG_MODE", "False").lower() == "true"
-        now = datetime.now()
+        now = get_current_ist_time()
+        utc_now = datetime.utcnow()
         yesterday = now - timedelta(days=1)
         
         # Ensure dates are always dynamic (Yesterday to Today)
         since_date = yesterday.strftime('%Y-%m-%d')
         until_date = now.strftime('%Y-%m-%d')
+        
+        logger.info(f"Time Sync | UTC: {utc_now.strftime('%H:%M')} | IST: {now.strftime('%H:%M')}")
         
         params = {
             'level': 'campaign',
@@ -134,10 +137,14 @@ class MetaAPIClient:
                 if not debug_mode and diff > hours:
                     decision = "DROPPED (Time Window)"
                     dropped_time_window += 1
-                    logger.info(f"Row Hour: {row_hour:02d} | System Hour: {current_hour:02d} | DIFF: {diff}h | {decision}")
-                    continue
                 
-                logger.info(f"Row Hour: {row_hour:02d} | System Hour: {current_hour:02d} | DIFF: {diff}h | {decision}")
+                utc_now = datetime.utcnow()
+                log_msg = f"UTC: {utc_now.strftime('%H:%M')} | IST: {now.strftime('%H:%M')} | Data hour: {row_hour:02d} | Current IST hour: {current_hour:02d} | DIFF: {diff}h | {decision}"
+                logger.info(log_msg)
+                
+                if decision.startswith("DROPPED"):
+                    continue
+                    
                 processed_data.append(row_record)
 
             except (ValueError, IndexError):
@@ -156,7 +163,7 @@ class MetaAPIClient:
     @retry(Exception, tries=5, delay=5, backoff=2, logger=logger)
     def fetch_insights_daily_sync(self, days=2):
         debug_mode = os.getenv("DEBUG_MODE", "False").lower() == "true"
-        now = datetime.now()
+        now = get_current_ist_time()
         start_date = now - timedelta(days=days)
         
         params = {

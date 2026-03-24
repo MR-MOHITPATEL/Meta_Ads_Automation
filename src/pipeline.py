@@ -1,6 +1,6 @@
 import os
 from datetime import datetime
-from src.utils import setup_logger, safe_divide
+from src.utils import setup_logger, safe_divide, get_current_ist_time
 
 
 logger = setup_logger("pipeline")
@@ -49,7 +49,7 @@ def transform_data(raw_data):
     Calculates derived metrics over the aggregated totals.
     """
     logger.info(f"Step: Transformation -> Received {len(raw_data)} raw records from API")
-    extraction_hour = datetime.now().strftime("%H:00")
+    extraction_hour = get_current_ist_time().strftime("%H:00")
     
     aggregated = {}
     
@@ -101,7 +101,7 @@ def transform_data(raw_data):
     # Sort by date ascending (date_stop)
     sorted_items = sorted(aggregated.items(), key=lambda x: x[1]['date_stop'])
     
-    run_time = datetime.now()
+    run_time = get_current_ist_time()
     current_hour = run_time.hour
 
     for id_key, agg in sorted_items:

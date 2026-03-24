@@ -7,7 +7,7 @@ logger = setup_logger("sheets_api")
 
 class GoogleSheetsClient:
     def __init__(self, spreadsheet_id=None, sheet_name="Daily Insights", test_mode=False):
-        self.credentials_file = os.getenv("GOOGLE_CREDENTIALS_FILE", "credentials/sa.json")
+        self.credentials_file = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "creds.json")
         self.spreadsheet_id = spreadsheet_id or os.getenv("GOOGLE_SPREADSHEET_ID")
         self.test_mode = test_mode
         self.sheet_name = "meta_hourly_test" if test_mode else sheet_name
@@ -40,16 +40,13 @@ class GoogleSheetsClient:
         self.sheet.batch_clear(["A2:Q1000"]) 
 
     def _authenticate(self):
-        creds_json = os.getenv("GOOGLE_CREDENTIALS_JSON")
-        if creds_json:
-            import json
-            creds_dict = json.loads(creds_json)
-            credentials = Credentials.from_service_account_info(creds_dict, scopes=self.scopes)
-        elif os.path.exists(self.credentials_file):
-            credentials = Credentials.from_service_account_file(self.credentials_file, scopes=self.scopes)
-        else:
-            raise ValueError("Google credentials missing.")
+        if not os.path.exists(self.credentials_file):
+            raise FileNotFoundError(
+                f"Google credentials missing! Expected file at: '{self.credentials_file}'. "
+                "Ensure GOOGLE_APPLICATION_CREDENTIALS is set or creds.json exists locally."
+            )
             
+        credentials = Credentials.from_service_account_file(self.credentials_file, scopes=self.scopes)
         return gspread.authorize(credentials)
 
     @retry(Exception, tries=4, delay=5, backoff=2, logger=logger)

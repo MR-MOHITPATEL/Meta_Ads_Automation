@@ -23,14 +23,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Create Google creds file
+      - name: Create Google creds file (robust)
         run: |
-          echo "${{ secrets.GOOGLE_CREDENTIALS_JSON }}" > creds.json
+          printf '%s' "${{ secrets.GOOGLE_CREDENTIALS_JSON }}" > creds.json
 
-      - name: Debug creds file
+      - name: Debug working directory
         run: |
-          ls -l
-          cat creds.json
+          pwd
+          ls -la
 
       - name: Run Pipeline
         env:
@@ -38,5 +38,6 @@ jobs:
           META_AD_ACCOUNT_ID: ${{ secrets.META_AD_ACCOUNT_ID }}
           META_API_VERSION: ${{ secrets.META_API_VERSION }}
           GOOGLE_SPREADSHEET_ID: ${{ secrets.GOOGLE_SPREADSHEET_ID }}
+          GOOGLE_APPLICATION_CREDENTIALS: creds.json
         run: |
           python -m src.main
